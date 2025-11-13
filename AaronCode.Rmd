@@ -1,0 +1,240 @@
+---
+title: "Statistical Analysis of Tornado Fatalities (1950-2024)"
+author: "Stats 4135"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  pdf_document: default
+  html_document:
+    theme: united
+    code_fold: hide
+---
+
+```{r setup, include=FALSE}
+# This chunk sets up the R environment for the report.
+# It's hidden from the final report (include=FALSE).
+
+# --- Auto-installer for required packages ---
+# List of required packages
+required_packages <- c("readr", "dplyr", "ggplot2", "lubridate", "mgcv", "viridis")
+# Identify packages that are not installed
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+# Install missing packages
+if(length(new_packages) > 0) {
+  install.packages(new_packages)
+}
+# --- End of installer ---
+
+
+# --- Load Libraries ---
+library(readr)     # For reading the CSV
+library(dplyr)     # For data manipulation
+library(ggplot2)   # For plotting
+library(lubridate)   # For parsing time
+library(mgcv)      # For Generalized Additive Models (GAM)
+library(viridis)   # For heatmap colors
+
+
+# --- Global Chunk Options ---
+# We set echo = FALSE to hide all R code from the final report.
+# We set fig.align = 'center' to center all subsequent plots.
+# We add fig.width and fig.height to make all plots smaller.
+knitr::opts_chunk$set(echo = FALSE, 
+                      message = FALSE, 
+                      warning = FALSE, 
+                      fig.align = 'center',
+                      fig.width = 6,    # Set width to 6 inches
+                      fig.height = 3.5) # Set height to 3.5 inches
+                      
+```
+
+# 1. Method
+
+This report investigates tornado fatalities (`fat`) using the `1950-2024_actual_tornadoes.csv` dataset. We will address two primary questions by preparing the data and applying distinct statistical methods to each.
+
+### Data Preparation
+
+The raw data will be loaded and processed. The key variables of interest are:
+* `yr`: The year of the event (for long-term trends).
+* `mo`: The month of the event (for seasonality).
+* `time`: The time of the event, which will be parsed to extract the `hour_of_day` (0-23).
+* `fat`: The count of fatalities for each tornado event.
+
+All analyses will be based on aggregating this fatality count (`sum(fat)`) against the time variables.
+
+### Question 1: Long-Term Trend Analysis
+
+**How have tornado deaths varied over long time trends?**
+
+To analyze the long-term trend, we will first aggregate the total number of fatalities for each year. 
+A simple linear regression (`lm`) is likely insufficient to capture the complex, non-linear pattern of disaster fatalities over 70+ years.
+
+Therefore, we will use a **Generalized Additive Model (GAM)**. A GAM is a flexible statistical method that can model non-linear relationships by using smoothing functions (splines).
+
+Our model will be:
+$$\text{TotalFatalities} \sim s(\text{Year})$$
+Where $s(\text{Year})$ is a smoothing spline function for the `Year` variable. This will allow us to fit a flexible trend line to the data, revealing the underlying pattern of tornado fatalities over time, separate from the high year-to-year volatility.
+
+### Question 2: Time of Year and Time of Day Analysis
+
+**How do tornado deaths vary with time of year and time of day?**
+
+This question will be answered using aggregation and visualization:
+
+1.  **Time of Year (Seasonality):** We will group the data by `month` (1-12) and sum all fatalities. This will be visualized with a bar chart to show the seasonal risk.
+2.  **Time of Day (Diurnal Pattern):** We will group the data by the extracted `hour_of_day` (0-23) and sum all fatalities. This will also be visualized with a bar chart to show the daily risk.
+3.  **Interaction:** To see how these two variables interact (e.g., are afternoon tornadoes in April the deadliest?), we will group by *both* `month` and `hour_of_day`. The summed fatalities for each of these 288 bins ($12 \text{ months} \times 24 \text{ hours}$) will be visualized using a **heatmap**.
+
+---
+
+# 2. Result
+
+This section contains the results of our analysis, showing the plots described in the methodology.
+
+### Data Preparation
+
+The data was loaded and processed. The first few rows of the prepared data are:
+
+```{r load-and-prepare-data}
+# Load the dataset (assuming it's in the same directory)
+file_name <- '1950-2024_actual_tornadoes.csv'
+tornado_data <- read_csv(file_name)
+
+# Prepare the data
+# - Select relevant columns
+# - Parse 'time' to get 'hour_of_day'
+# - Ensure fatalities are numeric
+fatalities_data <- tornado_data %>%
+  mutate(
+    hour_of_day = hour(hms(time)), # Parse time
+    fatalities = as.integer(fat),
+    month = as.integer(mo),
+    year = as.integer(yr)
+  ) %>%
+  # Filter out any events with no valid time
+  filter(!is.na(hour_of_day)) %>%
+  select(year, month, hour_of_day, fatalities)
+
+print("Processed Data Head:")
+print(head(fatalities_data))
+```
+
+### Result: Question 1 (Long-Term Trend)
+
+We first aggregate total fatalities by year. Then, we plot the data and overlay our GAM smooth trend line.
+
+```{r long-term-trend}
+# 1. Aggregate fatalities by year
+deaths_by_year <- fatalities_data %>%
+  group_by(year) %>%
+  summarise(total_deaths = sum(fatalities, na.rm = TRUE))
+
+# 2. Plot the results with a GAM smooth
+# We use geom_smooth() to fit and plot the GAM
+plot_long_term <- ggplot(deaths_by_year, aes(x = year, y = total_deaths)) +
+  geom_point(aes(color = total_deaths), alpha = 0.7) + # Plot individual years
+  # Fit a GAM smooth line
+  geom_smooth(method = "gam", formula = y ~ s(x), color = "red", fill = "red", alpha = 0.2) +
+  scale_color_gradient(low = "grey", high = "black", name = "Deaths in Year") +
+  labs(
+    title = "Long-Term Trend of Tornado Fatalities (1950-2024)",
+    subtitle = "Red line is a GAM smooth trend (y ~ s(x))",
+    x = "Year",
+    y = "Total Annual Fatalities"
+  ) +
+  theme_minimal()
+
+print(plot_long_term)
+```
+
+### Result: Question 2 (Time of Year and Day)
+
+#### Fatalities by Month (Time of Year)
+
+```{r by-month}
+# 1. Aggregate fatalities by month
+deaths_by_month <- fatalities_data %>%
+  group_by(month) %>%
+  summarise(total_deaths = sum(fatalities, na.rm = TRUE))
+
+# 2. Plot as a bar chart
+plot_by_month <- ggplot(deaths_by_month, aes(x = factor(month), y = total_deaths)) +
+  geom_col(fill = "steelblue") +
+  scale_x_discrete(labels = month.abb) + # Use month abbreviations
+  labs(
+    title = "Total Tornado Fatalities by Month (1950-2024)",
+    x = "Month",
+    y = "Total Fatalities"
+  ) +
+  theme_minimal()
+
+print(plot_by_month)
+```
+
+#### Fatalities by Hour (Time of Day)
+
+```{r by-hour}
+# 1. Aggregate fatalities by hour
+deaths_by_hour <- fatalities_data %>%
+  group_by(hour_of_day) %>%
+  summarise(total_deaths = sum(fatalities, na.rm = TRUE))
+
+# 2. Plot as a bar chart
+plot_by_hour <- ggplot(deaths_by_hour, aes(x = factor(hour_of_day), y = total_deaths)) +
+  geom_col(fill = "darkorange") +
+  scale_x_discrete(breaks = seq(0, 23, by = 2)) + # Clean up x-axis
+  labs(
+    title = "Total Tornado Fatalities by Hour of Day (1950-2024)",
+    x = "Hour of Day (0-23, Local Time)",
+    y = "Total Fatalities"
+  ) +
+  theme_minimal()
+
+print(plot_by_hour)
+```
+
+#### Interaction Heatmap (Month and Hour)
+
+```{r heatmap}
+# 1. Aggregate by both month and hour
+deaths_by_month_hour <- fatalities_data %>%
+  group_by(month, hour_of_day) %>%
+  summarise(total_deaths = sum(fatalities, na.rm = TRUE)) %>%
+  ungroup()
+
+# 2. Plot the heatmap
+plot_heatmap <- ggplot(deaths_by_month_hour, 
+                       aes(x = factor(month), 
+                           y = factor(hour_of_day, levels = 23:0), 
+                           fill = total_deaths)) +
+  geom_tile(color = "white", linewidth = 0.1) +
+  scale_fill_viridis_c(option = "magma", name = "Total\nFatalities", direction = -1) +
+  scale_x_discrete(labels = month.abb) +
+  scale_y_discrete(breaks = seq(0, 23, by = 2)) +
+  labs(
+    title = "Heatmap of Fatalities by Month and Hour",
+    x = "Month",
+    y = "Hour of Day (0-23, Local Time)"
+  ) +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+print(plot_heatmap)
+```
+
+---
+
+# 3. Interpretation
+
+### Interpretation: Long-Term Trend
+
+The first plot shows the total annual fatalities. The individual points show extreme year-to-year volatility, with most years having relatively few deaths, punctuated by catastrophic years (e.g., 2011, which is visible as a major outlier).
+
+The GAM trend line (in red), which smooths out this volatility, provides the most important insight. It shows a clear and significant downward trend in tornado fatalities from 1950 to the present. Despite a "bump" in the 1960s-70s, the overall trend is one of improvement. This is a crucial finding, suggesting that advancements in meteorology, warning systems, and public awareness have successfully reduced the death toll from tornadoes, even as populations may have increased.
+
+### Interpretation: Time of Year and Day
+
+The "Fatalities by Month" bar chart reveals a stark seasonal pattern. The risk is not evenly distributed. Fatalities peak dramatically in the spring, with April and May being the two deadliest months by a very large margin. June also has a high number of fatalities, followed by a secondary, smaller peak in the fall (e.g., November), which is a known "second season" for tornadoes. The summer (July-August) and deep winter (January) are the least fatal, on average.
+
+The "Fatalities by Hour" bar chart shows an equally strong diurnal pattern. Fatalities are lowest in the early morning (approx. 4 AM to 9 AM). The number of deaths begins to rise in the early afternoon and peaks dramatically between 4:00 PM (16) and 7:00 PM (19). This peak corresponds to the time of maximum daytime heating and atmospheric instability, which fuels the most violent tornadoes. It also, unfortunately, corresponds with a time when people are commuting from work or school, potentially making them more vulnerable. A secondary, and very dangerous, finding is the significant number of fatalities that occur after dark (e.g., 8 PM to 2 AM). These nocturnal tornadoes are often more deadly as they are harder to see and people may be asleep.
+
+The heatmap provides the most comprehensive picture by combining both variables. It confirms that the absolute "hot spot" for fatalities is the intersection of the two peaks: the afternoon and evening hours (approx. 3 PM to 8 PM) during the peak season (April and May). The brightest cells on the map are all located here. It also clearly visualizes the nocturnal risk. We can see a persistent, though smaller, cluster of fatalities occurring between 9 PM and 3 AM, particularly during the late winter and spring months (Feb, Mar, Apr). This visualizes the deadly "Dixie Alley" phenomenon, where tornadoes in the Southeastern US are often nocturnal.
